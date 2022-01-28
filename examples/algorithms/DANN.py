@@ -30,6 +30,7 @@ class DANN(SingleModelAlgorithm):
         loss,
         metric,
         n_train_steps,
+        mixed_precision,
         n_domains,
         group_ids_to_domains,
     ):

@@ -6,12 +6,13 @@ from optimizer import initialize_optimizer
 from torch.nn import DataParallel
 from torch.nn.utils import clip_grad_norm_
 from utils import move_to
+from torch.cuda.amp import autocast, GradScaler
 
 class SingleModelAlgorithm(GroupAlgorithm):
     """
     An abstract class for algorithm that has one underlying model.
     """
-    def __init__(self, config, model, grouper, loss, metric, n_train_steps):
+    def __init__(self, config, model, grouper, loss, metric, n_train_steps, mixed_precision=False):
         # get metrics
         self.loss = loss
         logged_metrics = [self.loss,]
@@ -30,6 +31,9 @@ class SingleModelAlgorithm(GroupAlgorithm):
         if config.use_data_parallel:
             model = DataParallel(model)
         model.to(config.device)
+
+        self.mixed_precision = mixed_precision
+        self.grad_scaler = GradScaler()
 
         self.batch_idx = 0
         self.gradient_accumulation_steps = config.gradient_accumulation_steps
@@ -77,7 +81,9 @@ class SingleModelAlgorithm(GroupAlgorithm):
         y_true = move_to(y_true, self.device)
         g = move_to(self.grouper.metadata_to_group(metadata), self.device)
 
-        outputs = self.get_model_output(x, y_true)
+        # ad amp
+        with autocast(enabled = self.mixed_precision):
+            outputs = self.get_model_output(x, y_true)
 
         results = {
             'g': g,
@@ -162,14 +168,27 @@ class SingleModelAlgorithm(GroupAlgorithm):
         """
         # compute objective
         objective = self.objective(results)
+        # this is the loss
         results['objective'] = objective.item()
-        objective.backward()
+
+        if self.mixed_precision:
+            self.grad_scaler.scale(objective).backward()
+        else:
+            objective.backward()
 
         # update model and logs based on effective batch
         if should_step:
-            if self.max_grad_norm:
-                clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-            self.optimizer.step()
+            if self.mixed_precision:
+                if self.max_grad_norm:
+                    # unscale before clipping
+                    self.grad_scaler.unscale_(self.optimizer)
+                    clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                scaler.step(self.optimizer)
+                scaler.update()
+            else:
+                if self.max_grad_norm:
+                    clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                self.optimizer.step()
             self.step_schedulers(
                 is_epoch=False,
                 metrics=self.log_dict,

@@ -14,7 +14,7 @@ from algorithms.noisy_student import NoisyStudent
 from configs.supported import algo_log_metrics, losses
 from losses import initialize_loss
 
-def initialize_algorithm(config, datasets, train_grouper, unlabeled_dataset=None):
+def initialize_algorithm(config, datasets, train_grouper, unlabeled_dataset=None, mixed_precision=False):
     train_dataset = datasets['train']['dataset']
     train_loader = datasets['train']['loader']
     d_out = infer_d_out(train_dataset, config)
@@ -84,6 +84,7 @@ def initialize_algorithm(config, datasets, train_grouper, unlabeled_dataset=None
             loss=loss,
             metric=metric,
             n_train_steps=n_train_steps,
+            mixed_precision=mixed_precision,
             n_domains = domain_idx,
             group_ids_to_domains=group_ids_to_domains,
         )
